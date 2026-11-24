@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<title>Puente de video — Inicio TV</title>
+<title>Puente de video — Inicio TV (v2)</title>
 <style>
   html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
   #p, iframe { width: 100%; height: 100%; border: 0; display: block; }
@@ -12,37 +12,65 @@
 <body>
 <div id="p"></div>
 <script>
-/* Página puente: carga el reproductor oficial de YouTube y avisa al launcher qué ocurre.
-   Uso: index.html?v=ID_DEL_VIDEO&m=1   (m=1 sin sonido, m=0 con sonido) */
+/* Página puente v2: mantiene un único reproductor oficial de YouTube y recibe órdenes del launcher.
+   Órdenes (postMessage):  {inicio:1, cmd:'load', v:ID, m:1|0, n:N}   {inicio:1, cmd:'stop'}
+   Avisos al launcher:     ready · playing · ended · error · nosound
+   Prueba en navegador:    index.html?v=ID_DEL_VIDEO */
 var q = {};
 location.search.slice(1).split('&').forEach(function (kv) {
   var i = kv.indexOf('=');
   if (i > 0) q[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1));
 });
+var player = null, ready = false, cur = 0, wantSound = false, started = false, tSound = null;
+var okId = /^[\w-]{6,20}$/;
+
 function send(ev, code) {
-  try { parent.postMessage(JSON.stringify({ inicio: 1, ev: ev, code: code }), '*'); } catch (e) {}
+  try { parent.postMessage(JSON.stringify({ inicio: 1, ev: ev, code: code, n: cur }), '*'); } catch (e) {}
+}
+function load(v, m, n) {
+  if (!okId.test(v || '')) { cur = n; return send('error', 'id'); }
+  cur = n; wantSound = (m === 0 || m === '0'); started = false;
+  clearTimeout(tSound);
+  try { player.mute(); player.loadVideoById(v); } catch (e) { send('error', 'load'); }
 }
 function onYouTubeIframeAPIReady() {
-  new YT.Player('p', {
-    videoId: q.v, width: '100%', height: '100%',
-    playerVars: { autoplay: 1, mute: q.m === '0' ? 0 : 1, controls: 0, rel: 0, fs: 0,
-                  playsinline: 1, iv_load_policy: 3, disablekb: 1 },
+  player = new YT.Player('p', {
+    width: '100%', height: '100%',
+    playerVars: { autoplay: 0, mute: 1, controls: 0, rel: 0, fs: 0, playsinline: 1, iv_load_policy: 3, disablekb: 1 },
     events: {
-      onReady: function (e) { try { e.target.playVideo(); } catch (x) {} },
+      onReady: function () {
+        ready = true; send('ready');
+        if (q.v) load(q.v, q.m || 1, 0);
+      },
       onStateChange: function (e) {
-        if (e.data === 1) send('playing');
-        else if (e.data === 0) send('ended');
+        if (e.data === 1 && !started) {
+          started = true; send('playing');
+          if (wantSound) {
+            // Arranca en silencio (siempre permitido) y luego activa el audio.
+            try { player.unMute(); player.setVolume(100); } catch (x) {}
+            tSound = setTimeout(function () {
+              try {
+                if (player.getPlayerState() !== 1) { player.mute(); player.playVideo(); send('nosound'); }
+              } catch (x) {}
+            }, 1500);
+          }
+        } else if (e.data === 0) { send('ended'); }
       },
       onError: function (e) { send('error', e.data); }
     }
   });
 }
-if (/^[\w-]{6,20}$/.test(q.v || '')) {
-  var s = document.createElement('script');
-  s.src = 'https://www.youtube.com/iframe_api';
-  s.onerror = function () { send('error', 'api'); };
-  document.head.appendChild(s);
-} else { send('error', 'id'); }
+window.addEventListener('message', function (e) {
+  var d = e.data;
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch (x) { return; } }
+  if (!d || !d.inicio || !ready) return;
+  if (d.cmd === 'load') load(d.v, d.m, d.n);
+  else if (d.cmd === 'stop') { clearTimeout(tSound); cur = 0; try { player.stopVideo(); } catch (x) {} }
+});
+var s = document.createElement('script');
+s.src = 'https://www.youtube.com/iframe_api';
+s.onerror = function () { send('error', 'api'); };
+document.head.appendChild(s);
 </script>
 </body>
 </html>
