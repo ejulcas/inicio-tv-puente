@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Puente de video — Inicio TV</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #p, iframe { width: 100%; height: 100%; border: 0; display: block; }
+</style>
+</head>
+<body>
+<div id="p"></div>
+<script>
+/* Página puente: carga el reproductor oficial de YouTube y avisa al launcher qué ocurre.
+   Uso: index.html?v=ID_DEL_VIDEO&m=1   (m=1 sin sonido, m=0 con sonido) */
+var q = {};
+location.search.slice(1).split('&').forEach(function (kv) {
+  var i = kv.indexOf('=');
+  if (i > 0) q[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1));
+});
+function send(ev, code) {
+  try { parent.postMessage(JSON.stringify({ inicio: 1, ev: ev, code: code }), '*'); } catch (e) {}
+}
+function onYouTubeIframeAPIReady() {
+  new YT.Player('p', {
+    videoId: q.v, width: '100%', height: '100%',
+    playerVars: { autoplay: 1, mute: q.m === '0' ? 0 : 1, controls: 0, rel: 0, fs: 0,
+                  playsinline: 1, iv_load_policy: 3, disablekb: 1 },
+    events: {
+      onReady: function (e) { try { e.target.playVideo(); } catch (x) {} },
+      onStateChange: function (e) {
+        if (e.data === 1) send('playing');
+        else if (e.data === 0) send('ended');
+      },
+      onError: function (e) { send('error', e.data); }
+    }
+  });
+}
+if (/^[\w-]{6,20}$/.test(q.v || '')) {
+  var s = document.createElement('script');
+  s.src = 'https://www.youtube.com/iframe_api';
+  s.onerror = function () { send('error', 'api'); };
+  document.head.appendChild(s);
+} else { send('error', 'id'); }
+</script>
+</body>
+</html>
